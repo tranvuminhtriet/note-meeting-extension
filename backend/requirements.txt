@@ -1,0 +1,5 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+git+https://github.com/openai/whisper.git
+ollama==0.1.6
+python-multipart==0.0.6
