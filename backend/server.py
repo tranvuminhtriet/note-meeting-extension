@@ -7,6 +7,7 @@ import base64
 import io
 import tempfile
 import os
+import traceback
 from typing import Optional
 
 app = FastAPI(title="Meeting Note Backend")
@@ -82,28 +83,35 @@ async def transcribe_audio(request: TranscribeRequest):
     try:
         # Decode base64 audio
         audio_bytes = base64.b64decode(request.audio)
-        
+        audio_size = len(audio_bytes)
+        print(f"[transcribe] Received audio: {audio_size} bytes, format: {request.format}")
+
+        # Skip empty or too-small chunks (< 1KB is likely silence/empty)
+        if audio_size < 1024:
+            print(f"[transcribe] Skipping tiny chunk ({audio_size} bytes)")
+            return TranscribeResponse(text="")
+
         # Save to temporary file
         with tempfile.NamedTemporaryFile(suffix=f".{request.format}", delete=False) as tmp_file:
             tmp_file.write(audio_bytes)
             tmp_path = tmp_file.name
-        
+
         try:
-            # Load Whisper model
+            # Load Whisper model and transcribe
             model = get_whisper_model()
-            
-            # Transcribe
-            result = model.transcribe(tmp_path, language="vi")  # Vietnamese
+            result = model.transcribe(tmp_path, language="vi")
             text = result["text"].strip()
-            
+            print(f"[transcribe] Result: '{text}'")
             return TranscribeResponse(text=text)
-        
+
         finally:
             # Cleanup temp file
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-    
+
     except Exception as e:
+        print(f"[transcribe] ERROR: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 

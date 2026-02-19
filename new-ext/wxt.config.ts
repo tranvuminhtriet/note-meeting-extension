@@ -6,7 +6,7 @@ export default defineConfig({
   manifest: {
     name: "Meeting Notes AI",
     description: "Realtime transcription and AI-powered meeting summaries",
-    permissions: ["tabCapture", "storage", "downloads"],
+    permissions: ["tabCapture", "storage", "downloads", "offscreen"],
     host_permissions: ["https://meet.google.com/*"],
     action: {
       default_title: "Meeting Notes AI",

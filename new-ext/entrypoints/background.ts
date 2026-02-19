@@ -1,174 +1,111 @@
-import { browser } from "wxt/browser";
+// Background: manages offscreen document, uses Port for reliable bg↔offscreen comms
+// Port approach avoids the sendMessage collision (bg catching its own messages)
+
+let offscreenPort: chrome.runtime.Port | null = null;
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function hasOffscreenDocument(): Promise<boolean> {
+  try {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
+    });
+    return contexts.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureOffscreen(): Promise<void> {
+  const exists = await hasOffscreenDocument();
+  if (!exists) {
+    await chrome.offscreen.createDocument({
+      url: chrome.runtime.getURL("offscreen.html"),
+      reasons: ["USER_MEDIA" as chrome.offscreen.Reason],
+      justification: "Record microphone audio for transcription",
+    });
+  }
+
+  // Wait for offscreen to connect back via Port
+  for (let i = 0; i < 50; i++) {
+    if (offscreenPort) return;
+    await wait(100);
+  }
+  throw new Error("Offscreen did not connect within 5s");
+}
+
+function postToOffscreen(msg: any, timeoutMs = 10000): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if (!offscreenPort)
+      return reject(new Error("Offscreen port not connected"));
+    const id = Math.random().toString(36).slice(2);
+    msg.__id = id;
+
+    const listener = (m: any) => {
+      if (m?.__respFor === id) {
+        offscreenPort!.onMessage.removeListener(listener);
+        clearTimeout(timer);
+        resolve(m.payload);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      offscreenPort?.onMessage.removeListener(listener);
+      reject(new Error("Offscreen response timeout"));
+    }, timeoutMs);
+
+    offscreenPort.onMessage.addListener(listener);
+    offscreenPort.postMessage(msg);
+  });
+}
 
 export default defineBackground(() => {
   console.log("Meeting Notes AI - Background worker initialized");
 
-  interface RecordingState {
-    isRecording: boolean;
-    mediaRecorder: MediaRecorder | null;
-    stream: MediaStream | null;
-    transcript: string;
-  }
+  // Offscreen connects back to background via named Port
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "offscreen") return;
+    offscreenPort = port;
+    console.log("[background] Offscreen connected via Port");
 
-  const state: RecordingState = {
-    isRecording: false,
-    mediaRecorder: null,
-    stream: null,
-    transcript: "",
-  };
+    port.onMessage.addListener((msg: any) => {
+      // Forward transcript updates to popup
+      if (msg?.type === "TRANSCRIPT_UPDATE") {
+        browser.runtime.sendMessage(msg).catch(() => {});
+      }
+    });
 
-  const BACKEND_URL = "http://localhost:8000";
-
-  // Listen for messages from popup
-  browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === "START_RECORDING") {
-      startRecording(message.tabId).then(sendResponse);
-      return true; // Async response
-    }
-
-    if (message.type === "STOP_RECORDING") {
-      stopRecording();
-      sendResponse({ success: true });
-      return true;
-    }
-
-    if (message.type === "GET_TRANSCRIPT") {
-      sendResponse({ transcript: state.transcript });
-      return true;
-    }
-
-    if (message.type === "CLEAR_TRANSCRIPT") {
-      state.transcript = "";
-      sendResponse({ success: true });
-      return true;
-    }
+    port.onDisconnect.addListener(() => {
+      console.log("[background] Offscreen disconnected");
+      offscreenPort = null;
+    });
   });
 
-  async function startRecording(tabId: number) {
-    try {
-      // Capture tab audio
-      const streamId = await new Promise<string>((resolve, reject) => {
-        browser.tabCapture.capture(
-          {
-            audio: true,
-            video: false,
-          },
-          (stream) => {
-            if (browser.runtime.lastError) {
-              reject(browser.runtime.lastError);
-              return;
-            }
-            if (!stream) {
-              reject(new Error("No stream returned"));
-              return;
-            }
-            // Get stream ID for later use
-            resolve(stream.id);
-          },
-        );
-      });
-
-      // Get the actual MediaStream
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          mandatory: {
-            chromeMediaSource: "tab",
-            chromeMediaSourceId: streamId,
-          },
-        },
-      } as any);
-
-      state.stream = stream;
-
-      // Create MediaRecorder
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: "audio/webm",
-      });
-
-      state.mediaRecorder = mediaRecorder;
-
-      // Handle audio chunks (every 5 seconds)
-      mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0) {
-          await transcribeChunk(event.data);
+  // Handle messages from popup
+  browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    (async () => {
+      if (message.type === "START_RECORDING") {
+        try {
+          await ensureOffscreen();
+          const result = await postToOffscreen({ type: "START_MIC" });
+          sendResponse(result);
+        } catch (e: any) {
+          sendResponse({ success: false, error: e.message });
         }
-      };
-
-      mediaRecorder.onerror = (error) => {
-        console.error("MediaRecorder error:", error);
-      };
-
-      // Start recording with 5s chunks
-      mediaRecorder.start(5000);
-      state.isRecording = true;
-
-      return { success: true };
-    } catch (error) {
-      console.error("Failed to start recording:", error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  function stopRecording() {
-    if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") {
-      state.mediaRecorder.stop();
-    }
-
-    if (state.stream) {
-      state.stream.getTracks().forEach((track) => track.stop());
-    }
-
-    state.isRecording = false;
-    state.mediaRecorder = null;
-    state.stream = null;
-  }
-
-  async function transcribeChunk(audioBlob: Blob) {
-    try {
-      // Convert blob to base64
-      const base64Audio = await blobToBase64(audioBlob);
-
-      // Send to backend
-      const response = await fetch(`${BACKEND_URL}/transcribe`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          audio: base64Audio,
-          format: "webm",
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.text.trim()) {
-          state.transcript += " " + data.text.trim();
-
-          // Notify popup of new transcript
-          browser.runtime.sendMessage({
-            type: "TRANSCRIPT_UPDATE",
-            text: data.text.trim(),
-          });
-        }
-      } else {
-        console.error("Transcription failed:", await response.text());
+        return;
       }
-    } catch (error) {
-      console.error("Transcription error:", error);
-    }
-  }
 
-  function blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = (reader.result as string).split(",")[1];
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  }
+      if (message.type === "STOP_RECORDING") {
+        try {
+          if (offscreenPort) {
+            await postToOffscreen({ type: "STOP_MIC" });
+          }
+          sendResponse({ success: true });
+        } catch (e: any) {
+          sendResponse({ success: false, error: e.message });
+        }
+        return;
+      }
+    })();
+    return true; // async sendResponse
+  });
 });
