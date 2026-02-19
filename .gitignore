@@ -1,0 +1,16 @@
+# Python virtual environment — bao giờ cũng bỏ venv
+backend/venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+*.egg-info/
+
+# Node modules
+**/node_modules/
+
+# Build outputs
+new-ext/.output/
+wxt-dev-wxt/.output/
+
+# OS files
+.DS_Store
