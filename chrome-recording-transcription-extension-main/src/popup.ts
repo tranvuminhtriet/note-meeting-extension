@@ -1,197 +1,197 @@
 // src/popup.ts
 
-const saveBtn = document.getElementById('save') as HTMLButtonElement | null;
-const micBtn = document.getElementById('enable-mic') as HTMLButtonElement | null;
-const startBtn = document.getElementById('start-rec') as HTMLButtonElement | null;
-const stopBtn = document.getElementById('stop-rec') as HTMLButtonElement | null;
+const startBtn = document.getElementById("start-rec") as HTMLButtonElement;
+const stopBtn = document.getElementById("stop-rec") as HTMLButtonElement;
+const summarizeBtn = document.getElementById(
+  "summarize-btn",
+) as HTMLButtonElement;
+const transcriptBox = document.getElementById(
+  "transcript-box",
+) as HTMLDivElement;
+const summaryBox = document.getElementById("summary-box") as HTMLDivElement;
+const summaryPanel = document.getElementById("summary-panel") as HTMLDivElement;
+const statusBadge = document.getElementById("status-badge") as HTMLDivElement;
+const copyBtn = document.getElementById("copy-transcript") as HTMLButtonElement;
+const micBtn = document.getElementById("enable-mic") as HTMLButtonElement;
 
-function setUI(recording: boolean) {
-  if (!startBtn || !stopBtn) return;
-  startBtn.disabled = recording;
-  stopBtn.disabled = !recording;
-}
+const BACKEND_URL = "http://localhost:8000";
 
-function toast(msg: string) {
-  console.log('[popup]', msg);
-}
-
-// open a full tab to prompt for mic permission
-async function openMicSetupTab() {
-  await chrome.tabs.create({ url: chrome.runtime.getURL('micsetup.html') });
-}
-
-// reflect mic permission state in the button label
-async function refreshMicButton() {
-  if (!micBtn || !('permissions' in navigator)) return;
+// Backend Health Check
+async function checkBackend() {
   try {
-    // @ts-ignore - chrome supports this permission name
-    const status = await (navigator as any).permissions.query({ name: 'microphone' });
-    const set = () => {
-      micBtn.textContent =
-        status.state === 'granted'
-          ? 'Microphone Enabled ✓'
-          : status.state === 'denied'
-          ? 'Microphone Blocked'
-          : 'Enable Microphone';
-      micBtn.disabled = status.state === 'granted';
-      micBtn.title =
-        status.state === 'granted'
-          ? 'Microphone is already enabled for this extension'
-          : 'Grant microphone permission so your voice is included in recordings';
-    };
-    set();
-    status.onchange = set;
-  } catch {
-    // permissions API might not be available
-  }
-}
-
-// init: read current recording state & update UI
-void (async () => {
-  try {
-    const st = await chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATUS' });
-    setUI(!!st?.recording);
-  } catch {
-    setUI(false);
-  }
-  refreshMicButton().catch(() => {});
-})();
-
-// react to background/offscreen state pings
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'RECORDING_STATE') setUI(!!msg.recording);
-  if (msg?.type === 'RECORDING_SAVED') {
-    toast(`Saved: ${msg.filename || 'recording.webm'}`);
-    setUI(false);
-  }
-});
-
-// mic permission priming
-micBtn?.addEventListener('click', async () => {
-  try {
-    if ('permissions' in navigator) {
-      // @ts-ignore
-      const p = await (navigator as any).permissions.query({ name: 'microphone' });
-      if (p.state === 'granted') {
-        alert('Microphone is already enabled for this extension.');
-        await refreshMicButton();
-        return;
-      }
-      if (p.state === 'denied') {
-        await openMicSetupTab();
-        return;
-      }
+    const res = await fetch(`${BACKEND_URL}/health`).catch(() => null);
+    if (res?.ok) {
+      statusBadge.textContent = "✓ Backend Online";
+      statusBadge.className = "online";
+      return true;
     }
-    // try inline
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-      s.getTracks().forEach(t => t.stop());
-      alert('Microphone enabled for the extension.');
-      await refreshMicButton();
-    } catch {
-      await openMicSetupTab();
-    }
-  } catch (e) {
-    console.error('[popup] mic enable flow error', e);
-    alert('Could not open the microphone setup page. Please try again.');
+  } catch {}
+
+  statusBadge.textContent = "✗ Backend Offline";
+  statusBadge.className = "";
+  return false;
+}
+
+// UI State
+function setRecordingUI(isRecording: boolean) {
+  startBtn.disabled = isRecording;
+  stopBtn.disabled = !isRecording;
+  if (isRecording) {
+    startBtn.innerHTML = "Recording...";
+    startBtn.classList.add("recording-pulse");
+  } else {
+    startBtn.innerHTML = "⏺ Start Recording";
+    startBtn.classList.remove("recording-pulse");
   }
-});
+}
 
-// manual transcript download
-saveBtn?.addEventListener('click', async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return;
+function updateTranscriptUI(text: string) {
+  if (!text) {
+    transcriptBox.textContent = "Not recording...";
+    transcriptBox.classList.remove("has-content");
+    return;
+  }
+  transcriptBox.textContent = text;
+  transcriptBox.classList.add("has-content");
+  transcriptBox.scrollTop = transcriptBox.scrollHeight;
 
-  const res = await chrome.tabs
-    .sendMessage(tab.id, { type: 'GET_TRANSCRIPT' })
-    .catch((_e) => {
-      toast('No transcript on this page');
-      return undefined;
-    });
+  // Enable summarize if we have text
+  summarizeBtn.disabled = text.length < 50;
+}
 
-  const transcript = (res as any)?.transcript as string | undefined;
-  if (!transcript?.trim()) {
-    toast('Transcript is empty');
+// Event Listeners
+startBtn.addEventListener("click", async () => {
+  const online = await checkBackend();
+  if (!online) {
+    alert("Cannot start: Backend server is not running at localhost:8000");
     return;
   }
 
-  const blob = new Blob([transcript], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const suffix =
-    new URL(tab.url ?? 'https://meet.google.com').pathname.split('/').pop() || 'google-meet';
+  // Check mic (legacy logic maintained)
+  if ("permissions" in navigator) {
+    try {
+      // @ts-ignore
+      const p = await navigator.permissions.query({ name: "microphone" });
+      if (p.state !== "granted") {
+        // try prime
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+          s.getTracks().forEach((t) => t.stop());
+        } catch {
+          const setup = confirm(
+            "Microphone permission needed to record audio. Open setup page?",
+          );
+          if (setup) {
+            chrome.tabs.create({ url: chrome.runtime.getURL("micsetup.html") });
+            return;
+          }
+        }
+      }
+    } catch {}
+  }
 
-  chrome.downloads.download(
-    { url, filename: `google-meet-transcript-${suffix}-${Date.now()}.txt`, saveAs: true },
-    () => URL.revokeObjectURL(url)
-  );
-});
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
 
-let inFlight = false;
-
-// start recording. also resets transcript buffer for a fresh session
-startBtn?.addEventListener('click', async () => {
-  if (!startBtn || !stopBtn || inFlight) return;
-  inFlight = true;
-  startBtn.disabled = true;
+  // Clear previous state
+  updateTranscriptUI("");
+  summaryPanel.style.display = "none";
+  await chrome.runtime.sendMessage({ type: "RESET_TRANSCRIPT" });
 
   try {
-    // auto-prime mic if not granted
-    if ('permissions' in navigator) {
-      try {
-        // @ts-ignore
-        const status = await (navigator as any).permissions.query({ name: 'microphone' });
-        if (status.state !== 'granted') {
-          try {
-            const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-            s.getTracks().forEach(t => t.stop());
-          } catch { 
-            // continue with tab-only audio
-            }
-        }
-      } catch { 
-        // do nothing
-        }
-    }
+    const res = await chrome.runtime.sendMessage({
+      type: "START_RECORDING",
+      tabId: tab.id,
+    });
+    if (!res?.ok) throw new Error(res?.error || "Unknown error");
+    setRecordingUI(true);
+  } catch (e: any) {
+    alert(`Failed to start: ${e.message}`);
+  }
+});
 
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error('No active tab');
+stopBtn.addEventListener("click", async () => {
+  await chrome.runtime.sendMessage({ type: "STOP_RECORDING" });
+  setRecordingUI(false);
+});
 
-    // reset transcript buffer so a new meeting starts clean
-    await chrome.tabs.sendMessage(tab.id, { type: 'RESET_TRANSCRIPT' }).catch(() => {
-      // if not on a Google Meet page yet, the transcript will just be empty later.
+summarizeBtn.addEventListener("click", async () => {
+  const text = transcriptBox.textContent || "";
+  if (text.length < 50) return;
+
+  summarizeBtn.disabled = true;
+  summarizeBtn.textContent = "⏳ Processing...";
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/summarize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transcript: text }),
     });
 
-    const resp = await chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: tab.id });
-    if (!resp) throw new Error('No response from background');
-    if (resp.ok === false) throw new Error(resp.error || 'Failed to start');
+    if (res.ok) {
+      const data = await res.json();
+      summaryPanel.style.display = "flex";
+      // Simple Markdown rendering (bold and lists)
+      summaryBox.innerHTML = (data.summary || "No summary generated")
+        .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+        .replace(/- /g, "<br>• ");
 
-    setUI(true);
-    toast('Recording started');
-  } catch (e: any) {
-    console.error('[popup] START_RECORDING error', e);
-    setUI(false);
-    alert(`Failed to start recording:\n${e?.message || e}`);
+      // Auto-download
+      const blob = new Blob(
+        [`Transcript:\n${text}\n\nSummary:\n${data.summary}`],
+        { type: "text/markdown" },
+      );
+      const url = URL.createObjectURL(blob);
+      chrome.downloads.download({
+        url,
+        filename: `meeting-summary-${Date.now()}.md`,
+        saveAs: true,
+      });
+    } else {
+      throw new Error("Backend returned error");
+    }
+  } catch (e) {
+    alert("Summarization failed. Is backend running?");
   } finally {
-    inFlight = false;
+    summarizeBtn.textContent = "✨ Summarize Meeting";
+    summarizeBtn.disabled = false;
   }
 });
 
-// stop recording
-stopBtn?.addEventListener('click', async () => {
-  if (!startBtn || !stopBtn || inFlight) return;
-  inFlight = true;
-  stopBtn.disabled = true;
-
-  try {
-    const resp = await chrome.runtime.sendMessage({ type: 'STOP_RECORDING' });
-    if (!resp) throw new Error('No response from background');
-    if (resp.ok === false) throw new Error(resp.error || 'Failed to stop');
-    toast('Stopping… finalizing…');
-  } catch (e: any) {
-    console.error('[popup] STOP_RECORDING error', e);
-    alert(`Failed to stop recording:\n${e?.message || e}`);
-    setUI(false);
-  } finally {
-    inFlight = false;
-  }
+copyBtn.addEventListener("click", () => {
+  navigator.clipboard.writeText(transcriptBox.textContent || "");
+  copyBtn.textContent = "Copied!";
+  setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
 });
+
+// Init
+(async () => {
+  checkBackend();
+
+  // Check recording status
+  const status = await chrome.runtime.sendMessage({
+    type: "GET_RECORDING_STATUS",
+  });
+  setRecordingUI(!!status?.recording);
+
+  // Get existing transcript
+  const trans = await chrome.runtime.sendMessage({
+    type: "GET_TRANSCRIPT_TEXT",
+  });
+  if (trans?.transcript) {
+    updateTranscriptUI(trans.transcript);
+  }
+
+  // Listen for updates
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "RECORDING_STATE") {
+      setRecordingUI(msg.recording);
+    }
+    if (msg.type === "TRANSCRIPT_UPDATE") {
+      if (msg.fullTranscript) {
+        updateTranscriptUI(msg.fullTranscript);
+      }
+    }
+  });
+})();

@@ -1,13 +1,224 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-  <head><title>Google Meet Helper</title></head>
+  <head>
+    <title>Meeting Notes AI</title>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --bg-primary: #0f0f0f;
+        --bg-secondary: #1a1a1a;
+        --bg-tertiary: #242424;
+        --text-primary: #ffffff;
+        --text-secondary: #a0a0a0;
+        --accent-primary: #3b82f6;
+        --accent-success: #10b981;
+        --accent-error: #ef4444;
+        --accent-warning: #f59e0b;
+        --border-color: #333333;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: -apple-system, system-ui, sans-serif;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        width: 400px;
+        height: 550px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      header {
+        padding: 16px;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: var(--bg-secondary);
+      }
+
+      h1 {
+        font-size: 16px;
+        font-weight: 700;
+        background: linear-gradient(135deg, var(--accent-primary), #8b5cf6);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      #status-badge {
+        font-size: 11px;
+        padding: 4px 8px;
+        border-radius: 12px;
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        border: 1px solid var(--border-color);
+      }
+
+      #status-badge.online {
+        color: var(--accent-success);
+        background: rgba(16, 185, 129, 0.1);
+        border-color: var(--accent-success);
+      }
+
+      main {
+        flex: 1;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        overflow-y: auto;
+      }
+
+      .controls {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .btn-group {
+        display: flex;
+        gap: 8px;
+      }
+
+      button {
+        padding: 10px;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 13px;
+        flex: 1;
+        transition: all 0.2s;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 6px;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      #start-rec {
+        background: var(--accent-primary);
+        color: white;
+      }
+
+      #start-rec:hover:not(:disabled) {
+        background: #2563eb;
+      }
+
+      #stop-rec {
+        background: var(--accent-error);
+        color: white;
+      }
+
+      #summarize-btn {
+        background: linear-gradient(135deg, #8b5cf6, #ec4899);
+        color: white;
+      }
+
+      #enable-mic,
+      #save-transcript {
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        border: 1px solid var(--border-color);
+      }
+
+      .panel {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .panel-header {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      #transcript-box,
+      #summary-box {
+        font-size: 13px;
+        line-height: 1.5;
+        max-height: 150px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        color: var(--text-secondary);
+      }
+
+      #transcript-box.has-content {
+        color: var(--text-primary);
+      }
+
+      /* Animation for recording */
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.7;
+        }
+      }
+      .recording-pulse {
+        animation: pulse 2s infinite;
+      }
+
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
   <body>
-    <button id="save">Download Transcript</button>
-    <hr/>
-    <button id="enable-mic">Enable Microphone</button>
-    <hr/>
-    <button id="start-rec">Start Recording</button>
-    <button id="stop-rec" disabled>Stop & Download</button>
+    <header>
+      <h1>Meeting Notes AI</h1>
+      <div id="status-badge">Checking Backend...</div>
+    </header>
+
+    <main>
+      <div class="controls">
+        <div class="btn-group">
+          <button id="start-rec">⏺ Start Recording</button>
+          <button id="stop-rec" disabled>⏹ Stop</button>
+        </div>
+        <button id="summarize-btn" disabled>✨ Summarize Meeting</button>
+        <button id="enable-mic" class="hidden">Enable Mic</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span>Transcript</span>
+          <button
+            id="copy-transcript"
+            style="padding: 2px 6px; font-size: 10px; flex: 0; width: auto"
+          >
+            Copy
+          </button>
+        </div>
+        <div id="transcript-box">Not recording...</div>
+      </div>
+
+      <div class="panel" id="summary-panel" style="display: none">
+        <div class="panel-header">AI Summary</div>
+        <div id="summary-box"></div>
+      </div>
+    </main>
+
     <script src="popup.js"></script>
   </body>
 </html>

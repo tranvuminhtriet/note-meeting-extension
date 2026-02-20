@@ -95,11 +95,18 @@ async def transcribe_audio(request: TranscribeRequest):
         with tempfile.NamedTemporaryFile(suffix=f".{request.format}", delete=False) as tmp_file:
             tmp_file.write(audio_bytes)
             tmp_path = tmp_file.name
+        
+        # DEBUG: Save copy for inspection
+        import time
+        debug_filename = f"debug_audio_{int(time.time())}.{request.format}"
+        with open(debug_filename, "wb") as f:
+            f.write(audio_bytes)
+        print(f"[transcribe] Saved debug file to: {debug_filename}")
 
         try:
             # Load Whisper model and transcribe
             model = get_whisper_model()
-            result = model.transcribe(tmp_path, language="vi")
+            result = model.transcribe(tmp_path, language="en")
             text = result["text"].strip()
             print(f"[transcribe] Result: '{text}'")
             return TranscribeResponse(text=text)
@@ -120,7 +127,7 @@ async def generate_summary(request: SummarizeRequest):
     """Generate structured summary using Ollama Mistral"""
     try:
         # Structured prompt for Mistral
-        prompt = f"""Analyze the following meeting transcript and create a structured summary in Vietnamese with these sections:
+        prompt = f"""Analyze the following meeting transcript and create a structured summary in English with these sections:
 
 ## Action Items
 List all tasks, assignments, and action items mentioned.
@@ -142,7 +149,7 @@ Please format the output in Markdown with clear sections."""
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that creates structured meeting summaries in Vietnamese."
+                    "content": "You are a helpful assistant that creates structured meeting summaries in English."
                 },
                 {
                     "role": "user",
