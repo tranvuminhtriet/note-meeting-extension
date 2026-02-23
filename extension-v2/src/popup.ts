@@ -5,6 +5,9 @@ const stopBtn = document.getElementById("stop-rec") as HTMLButtonElement;
 const summarizeBtn = document.getElementById(
   "summarize-btn",
 ) as HTMLButtonElement;
+const saveVideoBtn = document.getElementById(
+  "save-video-btn",
+) as HTMLButtonElement;
 const transcriptBox = document.getElementById(
   "transcript-box",
 ) as HTMLDivElement;
@@ -96,6 +99,7 @@ startBtn.addEventListener("click", async () => {
   // Clear previous state
   updateTranscriptUI("");
   summaryPanel.style.display = "none";
+  saveVideoBtn.style.display = "none";
   await chrome.runtime.sendMessage({ type: "RESET_TRANSCRIPT" });
 
   try {
@@ -113,9 +117,12 @@ startBtn.addEventListener("click", async () => {
 stopBtn.addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "STOP_RECORDING" });
   setRecordingUI(false);
+
+  // Auto-summarize
+  await triggerSummarize();
 });
 
-summarizeBtn.addEventListener("click", async () => {
+async function triggerSummarize() {
   const text = transcriptBox.textContent || "";
   if (text.length < 50) return;
 
@@ -157,6 +164,12 @@ summarizeBtn.addEventListener("click", async () => {
     summarizeBtn.textContent = "✨ Summarize Meeting";
     summarizeBtn.disabled = false;
   }
+}
+
+summarizeBtn.addEventListener("click", triggerSummarize);
+
+saveVideoBtn.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "DOWNLOAD_RECORDING" });
 });
 
 copyBtn.addEventListener("click", () => {
@@ -192,6 +205,10 @@ copyBtn.addEventListener("click", () => {
       if (msg.fullTranscript) {
         updateTranscriptUI(msg.fullTranscript);
       }
+    }
+    if (msg.type === "RECORDING_READY") {
+      saveVideoBtn.style.display = "block";
+      saveVideoBtn.disabled = false;
     }
   });
 })();

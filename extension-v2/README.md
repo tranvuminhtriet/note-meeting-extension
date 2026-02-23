@@ -1,0 +1,3 @@
+- Visit `chrome://extensions`
+- Turn on `Developer mode`
+- Click `Load unpacked` → select the `dist` directory that was created inside your repo when you ran `npm run build`

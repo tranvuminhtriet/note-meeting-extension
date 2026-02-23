@@ -118,23 +118,13 @@ chrome.runtime.onConnect.addListener((port) => {
           : `google-meet-recording-${Date.now()}.webm`;
 
       if (msg.blobUrl) {
-        // ...
-        // (omitted for brevity, just ensuring context match)
-        bglog("Saving OFFSCREEN_SAVE via blobUrl", filename);
-        chrome.downloads.download(
-          { url: msg.blobUrl, filename, saveAs: true },
-          () => {
-            // ...
-            setTimeout(() => {
-              try {
-                offscreenPort?.postMessage({
-                  type: "REVOKE_BLOB_URL",
-                  blobUrl: msg.blobUrl,
-                });
-              } catch {}
-            }, 10_000);
-          },
-        );
+        bglog("Received OFFSCREEN_SAVE. Storing blobUrl.", filename);
+
+        // Store for manual save
+        (self as any).pendingVideoBlob = { url: msg.blobUrl, filename };
+
+        // Notify popup that video is ready
+        chrome.runtime.sendMessage({ type: "RECORDING_READY" }).catch(() => {});
         return;
       }
     }
@@ -270,6 +260,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === "RESET_TRANSCRIPT") {
       currentTranscript = "";
       sendResponse({ ok: true });
+      return;
+    }
+
+    if (msg?.type === "DOWNLOAD_RECORDING") {
+      const pending = (self as any).pendingVideoBlob;
+      if (pending && pending.url) {
+        chrome.downloads.download(
+          { url: pending.url, filename: pending.filename, saveAs: true },
+          () => {
+            // Optional callback
+          },
+        );
+        sendResponse({ ok: true });
+      } else {
+        sendResponse({ ok: false, error: "No recording available" });
+      }
       return;
     }
   })().catch((err) => {

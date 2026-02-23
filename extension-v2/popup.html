@@ -186,7 +186,6 @@
   </head>
   <body>
     <header>
-      <h1>Meeting Notes AI</h1>
       <div id="status-badge">Checking Backend...</div>
     </header>
 
@@ -197,6 +196,9 @@
           <button id="stop-rec" disabled>⏹ Stop</button>
         </div>
         <button id="summarize-btn" disabled>✨ Summarize Meeting</button>
+        <button id="save-video-btn" disabled style="display: none">
+          💾 Save Video
+        </button>
         <button id="enable-mic" class="hidden">Enable Mic</button>
       </div>
 
@@ -214,7 +216,7 @@
       </div>
 
       <div class="panel" id="summary-panel" style="display: none">
-        <div class="panel-header">AI Summary</div>
+        <div class="panel-header">Summary</div>
         <div id="summary-box"></div>
       </div>
     </main>
